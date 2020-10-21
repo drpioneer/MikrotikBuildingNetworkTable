@@ -1,7 +1,7 @@
 # Script for building a network table
 # https://forummikrotik.ru/viewtopic.php?p=70575
 # tested on ROS 6.47
-# updated 2020/09/25
+# updated 2020/10/17
 
 # interface list
 :global interfaceIndexArray 0;
@@ -62,7 +62,7 @@ foreach ipAddress in=([ /ip address find; ]) do={
 # ip arp list
 :global ipArpIndexArray 0;
 :global ipArpArray {"";"";"";"";""}; 
-foreach ipArp in=([ /ip arp find; ]) do={
+foreach ipArp in=([ /ip arp find complete=yes; ]) do={
     :local ipArpInterface        ([ /ip arp get $ipArp interface; ]); 
     :local ipArpMACAddress       ([ /ip arp get $ipArp mac-address; ]);
     :local ipArpIP               ([ /ip arp get $ipArp address; ]); 
@@ -84,7 +84,7 @@ foreach ipArp in=([ /ip arp find; ]) do={
                 :set ipArpInterface ([ /interface bridge host get [ find mac-address=$ipArpMACAddress ] on-interface; ]);
             }
         } on-error={ }
-        :set ($ipArpArray->$ipArpIndexArray) {$ipArpInterface;$ipArpMACAddress;$ipArpIP;$ipArpComment;$ipArpNetwork};
+        :set ($ipArpArray->$ipArpIndexArray) {$ipArpInterface;$ipArpMACAddress;$ipArpIP;$ipArpNetwork;$ipArpComment};
         :set ipArpIndexArray ($ipArpIndexArray + 1);
     }
 }
@@ -110,7 +110,7 @@ for i from=0 to=$interfaceIndexArray do={
     for j from=0 to=$ipArpIndexArray do={
         :local findDestination [:find key=($ipArpArray->$j->0) in=($interfaceArray->$i)];
         if ([:tostr [$findDestination]] != "") do={
-            :set ($newArray->$newIndexArray) {$newIndexArray-1;($ipArpArray->$j->0);"";($ipArpArray->$j->1);($ipArpArray->$j->2);($ipArpArray->$j->4);($ipArpArray->$i->3)}; 
+            :set ($newArray->$newIndexArray) {$newIndexArray-1;($ipArpArray->$j->0);" >> IP/ARP <<";($ipArpArray->$j->1);($ipArpArray->$j->2);($ipArpArray->$j->3);($ipArpArray->$j->4)}; 
             :set newIndexArray ($newIndexArray + 1);
         }
     }
