@@ -1,141 +1,144 @@
 # Script for building a network table by drPioneer
 # https://forummikrotik.ru/viewtopic.php?p=70575
-# tested on ROS 6.49
-# updated 2021/11/25
+# tested on ROS 6.49.10 & 7.12
+# updated 2024/02/06
 
 :do {
-    # tools ip scan list
-    /tool ip-scan duration=30s;
-    
-    # interface list
-    :local interfaceIndexArray 0;
-    :local interfaceArray {"";"";"";""};
-    :foreach interfaceIndex in=[ /interface find running=yes; ] do={
-        :local interfaceName         ([ /interface get $interfaceIndex name; ]);
-        :local interfaceHost         ([ /system identity get name; ]);
-        :local interfaceMAC          ([ /interface get $interfaceIndex mac-address; ]);
-        :local interfaceComment      ([ /interface get $interfaceIndex comment; ]);
-        :set ($interfaceArray->$interfaceIndexArray) {$interfaceName;$interfaceHost;$interfaceMAC;$interfaceComment};
-        :set interfaceIndexArray ($interfaceIndexArray + 1);
-    }
-    :set interfaceIndexArray ($interfaceIndexArray - 1);
+  :local myFile "";     # file name, for example "nmap.txt"
 
-    # interface bridge host list
-    :local bridgeHostIndexArray 0;
-    :local bridgeHostArray {"";"";"";"";"";""};
-    :foreach bridgeHost in=[ /interface bridge host find; ] do={
+  # tool ip-scan list
+  /tool ip-scan duration=30s;
+
+  # interface list
+  :local ifcCnt 0; :local ifc {"";"";"";""};
+  /interface;
+  :foreach ifcIdx in=[find running=yes] do={
+    :local ifcNam [get $ifcIdx name];
+    :local ifcMac [get $ifcIdx mac-address];
+    :local ifcCmt [get $ifcIdx comment];
+    :local ifcHst [/system identity get name];
+    :set ($ifc->$ifcCnt) {$ifcNam;$ifcHst;$ifcMac;$ifcCmt};
+    :set ifcCnt ($ifcCnt+1);
+  }
+  :set ifcCnt ($ifcCnt-1);
+
+  # bridge host list
+  :local hstCnt 0; :local hst {"";"";"";"";"";""};
+  /interface bridge host;
+  :foreach hstIdx in=[find] do={
+    :do {
+      :local hstCmt ""; :local hstNam ""; :local hstIpa "";
+      :local hstIfc [get $hstIdx on-interface];
+      :local hstMac [get $hstIdx mac-address];
+      :local hstBrg [get $hstIdx bridge];
+      :if ([get $hstIdx local]=true) do={ 
+        :set hstNam [/system identity get name];
+        :set hstIpa [/ip address get [find interface=$hstBrg] address];
+      } else={
+        /ip dhcp-server lease;
         :do {
-            :local hostInterface     ([ /interface bridge host get $bridgeHost on-interface; ]);
-            :local hostMAC           ([ /interface bridge host get $bridgeHost mac-address; ]);
-            :local hostBridge        ([ /interface bridge host get $bridgeHost bridge; ]);
-            :local hostComment       ("");
-            :local hostName          ("");
-            :local hostIP            ("");
-            if ([ /interface bridge host get $bridgeHost local; ] = true) do={ 
-                :set hostName        ([ /system identity get name; ]);
-                :set hostIP          ([ /ip address get [ find interface=$hostBridge ] address; ]);
-            } else={
-                :do {
-                    :set hostName    ([ /ip dhcp-server lease get [ find mac-address=$hostMAC ] host-name; ]);
-                    :set hostIP      ([ /ip dhcp-server lease get [ find mac-address=$hostMAC ] address; ]);
-                    :set hostComment ([ /ip dhcp-server lease get [ find mac-address=$hostMAC ] comment; ]);
-                } on-error={ 
-                    :set hostName    ([ /ip dhcp-server lease get [ find mac-address=$hostMAC dynamic=yes ] host-name; ]);
-                    :set hostIP      ([ /ip dhcp-server lease get [ find mac-address=$hostMAC dynamic=yes ] address; ]);
-                }
-            }
-            :set ($bridgeHostArray->$bridgeHostIndexArray) {$hostInterface;$hostName;$hostMAC;$hostIP;$hostBridge;$hostComment};
-            :set bridgeHostIndexArray ($bridgeHostIndexArray + 1);
-        } on-error={ }
-    }
-    :set bridgeHostIndexArray ($bridgeHostIndexArray - 1);
-
-    # ip address list
-    :local ipAddressIndexArray 0;
-    :local ipAddressArray {"";"";"";""};
-    :foreach ipAddress in=([ /ip address find; ]) do={
-        :local ipAddressInterface    ([ /ip address get $ipAddress interface; ]); 
-        :local ipAddressIP           ([ /ip address get $ipAddress address; ]); 
-        :local ipAddressNetwork      ([ /ip address get $ipAddress network; ]);
-        :local ipAddressComment      ([ /ip address get $ipAddress comment; ]);
-        :set ($ipAddressArray->$ipAddressIndexArray) {$ipAddressInterface;$ipAddressIP;$ipAddressNetwork;$ipAddressComment};
-        :set ipAddressIndexArray ($ipAddressIndexArray + 1);
-    }
-    :set ipAddressIndexArray ($ipAddressIndexArray - 1);
-
-    # ip arp list
-    :local ipArpIndexArray 0;
-    :local ipArpArray {"";"";"";"";""}; 
-    :foreach ipArp in=([ /ip arp find; ]) do={
-        :local ipArpInterface        ([ /ip arp get $ipArp interface; ]); 
-        :local ipArpMACAddress       ([ /ip arp get $ipArp mac-address; ]);
-        :local ipArpIP               ([ /ip arp get $ipArp address; ]); 
-        :local ipArpComment          ([ /ip arp get $ipArp comment; ]);
-        :local ipArpNetwork          ("");
-        :do { 
-            :set ipArpNetwork        ([ /ip dhcp-client get [find interface=$ipArpInterface ] gateway ]); 
-        } on-error={ }
-        if ($ipArpNetwork = $ipArpIP) do={ :set ipArpNetwork ("GATEWAY"); }
-        :local equalMACAddress (false);
-        :for i from=0 to=$bridgeHostIndexArray do={
-            :local findDestination [:find key=($ipArpMACAddress) in=($bridgeHostArray->$i)];
-            if ([:tostr [$findDestination]] != "") do={ :set equalMACAddress (true); }
+          :set hstNam [get [find mac-address=$hstMac] host-name];
+          :set hstIpa [get [find mac-address=$hstMac] address];
+          :set hstCmt [get [find mac-address=$hstMac] comment];
+        } on-error={
+          :set hstNam [get [find mac-address=$hstMac dynamic=yes] host-name];
+          :set hstIpa [get [find mac-address=$hstMac dynamic=yes] address];
         }
-        if ($equalMACAddress = false) do={
-            :do {
-                if ([ /interface bridge host get [ find mac-address=$ipArpMACAddress ] on-interface; ] != "") do={
-                    :set ipArpNetwork ($ipArpInterface);
-                    :set ipArpInterface ([ /interface bridge host get [ find mac-address=$ipArpMACAddress ] on-interface; ]);
-                }
-            } on-error={ }
-            :set ($ipArpArray->$ipArpIndexArray) {$ipArpInterface;$ipArpMACAddress;$ipArpIP;$ipArpComment;$ipArpNetwork};
-            :set ipArpIndexArray ($ipArpIndexArray + 1);
-        }
-    }
-    :set ipArpIndexArray ($ipArpIndexArray - 1);
+      }
+      :set ($hst->$hstCnt) {$hstIfc;$hstNam;$hstMac;$hstIpa;$hstBrg;$hstCmt};
+      :set hstCnt ($hstCnt+1);
+    } on-error={}
+  }
+  :set hstCnt ($hstCnt-1);
 
-    # build new list
-    :local newIndexArray 1;
-    :local newArray {"";"";"";"";"";"";""};
-    :set ($newArray->0) {"NUMBER";"INTERFACE";"HOST-NAME";"MAC-ADDRESS";"IP-ADDRESS";"NETWORK";"REMARK"};
-    :set ($newArray->1) {"";"";"";"";"";"";""};
-    :for i from=0 to=$interfaceIndexArray do={
-        :for j from=0 to=$bridgeHostIndexArray do={
-            :local findDestination [:find key=($bridgeHostArray->$j->0) in=($interfaceArray->$i)];
-            if ([:tostr [$findDestination]] != "" && ($bridgeHostArray->$j->4) != ($bridgeHostArray->$j->0)) do={
-                if (($bridgeHostArray->$j->2) = ($interfaceArray->$i->2)) do={
-                    :set ($newArray->$newIndexArray) {$newIndexArray;($bridgeHostArray->$j->0);($bridgeHostArray->$j->1);($bridgeHostArray->$j->2);($bridgeHostArray->$j->3);($bridgeHostArray->$j->4);($interfaceArray->$i->3)}; 
-                } else={
-                    :set ($newArray->$newIndexArray) {$newIndexArray;($bridgeHostArray->$j->0);($bridgeHostArray->$j->1);($bridgeHostArray->$j->2);($bridgeHostArray->$j->3);($bridgeHostArray->$j->4);($bridgeHostArray->$j->5)}; 
-                }
-                :set newIndexArray ($newIndexArray + 1);
-            }
-        }
-        :for j from=0 to=$ipArpIndexArray do={
-            :local findDestination [:find key=($ipArpArray->$j->0) in=($interfaceArray->$i)];
-            if ([:tostr [$findDestination]] != "") do={
-                :set ($newArray->$newIndexArray) {$newIndexArray;($ipArpArray->$j->0);"";($ipArpArray->$j->1);($ipArpArray->$j->2);($ipArpArray->$j->4);($ipArpArray->$i->3)}; 
-                :set newIndexArray ($newIndexArray + 1);
-            }
-        }
-        :for j from=0 to=$ipAddressIndexArray do={
-            :local findDestination [:find key=($interfaceArray->$i->0) in=($ipAddressArray->$j)];
-            if ([:tostr [$findDestination]] != "") do={
-                :set ($newArray->$newIndexArray) {$newIndexArray;($interfaceArray->$i->0);($interfaceArray->$i->1);($interfaceArray->$i->2);($ipAddressArray->$j->1);($ipAddressArray->$j->2);($interfaceArray->$i->3)}; 
-                :set newIndexArray ($newIndexArray + 1);
-            }
-        }
-    }
-    :set newIndexArray ($newIndexArray - 1);
+  # ip address list
+  :local ipaCnt 0; :local ipa {"";"";"";""};
+  /ip address;
+  :foreach ipaIdx in=[find] do={
+    :local ipaIfc [get $ipaIdx interface];
+    :local ipaAdr [get $ipaIdx address];
+    :local ipaNet [get $ipaIdx network];
+    :local ipaCmt [get $ipaIdx comment];
+    :set ($ipa->$ipaCnt) {$ipaIfc;$ipaAdr;$ipaNet;$ipaCmt};
+    :set ipaCnt ($ipaCnt+1);
+  }
+  :set ipaCnt ($ipaCnt-1);
 
-    # list output to terminal
-    :local outMsgTrm;
-    :local outMsgLog;
-    :for i from=0 to=$newIndexArray do={
-        :set outMsgTrm ($outMsgTrm."\r\n".($newArray->$i->0)." \t".($newArray->$i->1)." \t".($newArray->$i->2)." \t".($newArray->$i->4)." \t".($newArray->$i->3)." \t".($newArray->$i->5)." \t".($newArray->$i->6));
-        :set outMsgLog ($outMsgLog."\r\n".($newArray->$i->0)." \t".($newArray->$i->1)." \t".($newArray->$i->2)." \t".($newArray->$i->4)." \t".($newArray->$i->3)." \t".($newArray->$i->5)." \t".($newArray->$i->6));
+  # ip arp list
+  :local arpCnt 0; :local arp {"";"";"";"";""};
+  /ip arp;
+  :foreach arpIdx in=[find] do={
+    :local arpIfc [get $arpIdx interface];
+    :local arpIpa [get $arpIdx address];
+    :local arpMac [get $arpIdx mac-address];
+    :local arpCmt [get $arpIdx comment];
+    :local arpNet "";
+    :do {:set arpNet [/ip dhcp-client get [find interface=$arpIfc] gateway]} on-error={}
+    :if ($arpNet=$arpIpa) do={:set arpNet "GATEWAY"}
+    :local equMac false;
+    :for i from=0 to=$hstCnt do={
+      :local fndDst [:find key=$arpMac in=($hst->$i)];
+      :if ([:tostr [$fndDst]]!="") do={:set equMac true}
     }
-    :put $outMsgTrm;
-    :log warn $outMsgLog;
-}
+    :if ($equMac=false) do={
+      :do {
+        /interface bridge host;
+        :if ([get [find mac-address=$arpMac] on-interface]!="") do={
+          :set arpNet $arpIfc;
+          :set arpIfc [get [find mac-address=$arpMac] on-interface];
+        }
+      } on-error={}
+      :set ($arp->$arpCnt) {$arpIfc;$arpMac;$arpIpa;$arpCmt;$arpNet};
+      :set arpCnt ($arpCnt+1);
+    }
+  }
+  :set arpCnt ($arpCnt-1);
 
+  # build list
+  :local arrIdx 1; :local arr {"";"";"";"";"";"";""};
+  :set ($arr->0) {"NUMBER";"INTERFACE";"HOST-NAME";"MAC-ADDRESS";"IP-ADDRESS";"NETWORK";"REMARK"};
+  :set ($arr->1) {"";"";"";"";"";"";""};
+  :for i from=0 to=$ifcCnt do={
+    :for j from=0 to=$hstCnt do={
+      :local fndDst [:find key=($hst->$j->0) in=($ifc->$i)];
+      :if ([:tostr [$fndDst]]!="" && ($hst->$j->4)!=($hst->$j->0)) do={
+        :if (($hst->$j->2)=($ifc->$i->2)) do={
+          :set ($arr->$arrIdx) {$arrIdx;($hst->$j->0);($hst->$j->1);($hst->$j->2);($hst->$j->3);($hst->$j->4);($ifc->$i->3)}; 
+        } else={
+          :set ($arr->$arrIdx) {$arrIdx;($hst->$j->0);($hst->$j->1);($hst->$j->2);($hst->$j->3);($hst->$j->4);($hst->$j->5)}; 
+        }
+        :set arrIdx ($arrIdx+1);
+      }
+    }
+    :for j from=0 to=$arpCnt do={
+      :local fndDst [:find key=($arp->$j->0) in=($ifc->$i)];
+      :if ([:tostr [$fndDst]]!="") do={
+        :set ($arr->$arrIdx) {$arrIdx;($arp->$j->0);"";($arp->$j->1);($arp->$j->2);($arp->$j->4);($arp->$i->3)}; 
+        :set arrIdx ($arrIdx+1);
+      }
+    }
+    :for j from=0 to=$ipaCnt do={
+      :local fndDst [:find key=($ifc->$i->0) in=($ipa->$j)];
+      :if ([:tostr [$fndDst]]!="") do={
+        :set ($arr->$arrIdx) {$arrIdx;($ifc->$i->0);($ifc->$i->1);($ifc->$i->2);($ipa->$j->1);($ipa->$j->2);($ifc->$i->3)}; 
+        :set arrIdx ($arrIdx+1);
+      }
+    }
+  }
+  :set arrIdx ($arrIdx-1);
+
+  # output list
+  :global outNetMap "";
+  :local TextCut do={:return [:pick "$1                                             " 0 $2]}
+  :for i from=0 to=$arrIdx do={
+    :set outNetMap ("$outNetMap\r\n$[$TextCut ($arr->$i->0) 3]\t$[$TextCut ($arr->$i->3) 17]\t$[$TextCut ($arr->$i->4) 18]\t\
+    $[$TextCut ($arr->$i->1) 18]\t$[$TextCut ($arr->$i->5) 15]\t$[$TextCut ($arr->$i->2) 21]\t$[$TextCut ($arr->$i->6) 35]");
+  }
+  :put ("---------------------------------------------------------------------------------------------------------------------------$outNetMap");
+  :if ([:len $myFile]!=0) do={
+    :local fileName ("$[/system identity get name]_$myFile");
+    :execute script=":global outNetMap; :put (\"$outNetMap\");" file=$fileName;
+    :put ("File '$fileName' was successfully created");
+  } else={:put ("File creation is not enabled")}
+} on-error={:put "Problem in work 'NetMap' script"}
+/system script environment remove [find name~"outNetMap"];
