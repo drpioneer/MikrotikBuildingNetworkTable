@@ -1,5 +1,5 @@
 # Script for building a network table by drPioneer
-# https://forummikrotik.ru/viewtopic.php?p=70575
+# https://forummikrotik.ru/viewtopic.php?p=92265#p92265
 # tested on ROS 6.49.10 & 7.12
 # updated 2024/02/06
 
