@@ -1,13 +1,12 @@
 # Script for building a network table by drPioneer
 # https://forummikrotik.ru/viewtopic.php?p=92265#p92265
 # tested on ROS 6.49.10 & 7.12
-# updated 2024/02/06
+# updated 2024/02/29
 
+:global outNetMap;
 :do {
-  :local myFile "";     # file name, for example "nmap.txt"
-
-  # tool ip-scan list
-  /tool ip-scan duration=30s;
+  :local myFile ""; # file name, for example "nmap.txt"
+#  /tool ip-scan duration=30s; # tool ip-scan list for switch
 
   # interface list
   :local ifcCnt 0; :local ifc {"";"";"";""};
@@ -128,7 +127,6 @@
   :set arrIdx ($arrIdx-1);
 
   # output list
-  :global outNetMap "";
   :local TextCut do={:return [:pick "$1                                             " 0 $2]}
   :for i from=0 to=$arrIdx do={
     :set outNetMap ("$outNetMap\r\n$[$TextCut ($arr->$i->0) 3]\t$[$TextCut ($arr->$i->3) 17]\t$[$TextCut ($arr->$i->4) 18]\t\
@@ -141,4 +139,5 @@
     :put ("File '$fileName' was successfully created");
   } else={:put ("File creation is not enabled")}
 } on-error={:put "Problem in work 'NetMap' script"}
+:delay 1s; # time delay between command executing and remove global variables
 /system script environment remove [find name~"outNetMap"];
