@@ -1,143 +1,106 @@
 # Script for building a network table by drPioneer
 # https://forummikrotik.ru/viewtopic.php?p=92265#p92265
-# tested on ROS 6.49.10 & 7.12
-# updated 2024/02/29
+# checked on ROS 6.49.17 & 7.16.2
+# updated 2025/01/16
 
-:global outNetMap;
+:global outNetMap; :local sysId [/system identity get name]; 
 :do {
+#  /tool ip-scan duration=30s; # tool ip-scan list
   :local myFile ""; # file name, for example "nmap.txt"
-#  /tool ip-scan duration=30s; # tool ip-scan list for switch
+  :local debug false; # debug mode (true=>is active or false=>is inactive)
 
-  # interface list
-  :local ifcCnt 0; :local ifc {"";"";"";""};
-  /interface;
-  :foreach ifcIdx in=[find running=yes] do={
-    :local ifcNam [get $ifcIdx name];
-    :local ifcMac [get $ifcIdx mac-address];
-    :local ifcCmt [get $ifcIdx comment];
-    :local ifcHst [/system identity get name];
-    :set ($ifc->$ifcCnt) {$ifcNam;$ifcHst;$ifcMac;$ifcCmt};
-    :set ifcCnt ($ifcCnt+1);
-  }
-  :set ifcCnt ($ifcCnt-1);
+  # reading data
+  :local ifc {"intf";"";"mac";"";"";"rem"}; :local idxIfc -1; # interface list
+  /interface; :foreach id in=[find running=yes] do={:set idxIfc ($idxIfc+1)
+    :set ($ifc->$idxIfc) {[get $id name];"";[get $id mac-address];"";"";[get $id comment]}}
+  :local brg {"intf";"";"mac";"";"brdg";"loc"}; :local idxBrg -1; # bridge-host list
+  /interface bridge host; :foreach id in=[find disabled=no] do={:set idxBrg ($idxBrg+1)
+    :set ($brg->$idxBrg) {[get $id on-interface];"";[get $id mac-address];"";[get $id bridge];[get $id local]}}
+  :local dhS {"";"host";"mac";"ip";"";"rem"}; :local idxDhS -1; # dhcp-server list
+  /ip dhcp-server lease; :foreach id in=[find active-mac-address~":"] do={:set idxDhS ($idxDhS+1)
+    :set ($dhS->$idxDhS) {"";[get $id host-name];[get $id mac-address];[get $id address];"";[get $id comment]}}
+  :local dhC {"intf";"gw";"";"ip";"";"rem"}; :local idxDhC -1; # dhcp-client list
+  /ip dhcp-client; :foreach id in=[find status=bound] do={:set idxDhC ($idxDhC+1)
+    :set ($dhC->$idxDhC) {[get $id interface];[get $id gateway];"";[get $id address];"";[get $id comment]}}
+  :local adr {"intf";"";"";"ip";"netw";""}; :local idxAdr -1; # ip-address list
+  /ip address; :foreach id in=[find disabled=no] do={:set idxAdr ($idxAdr+1)
+    :set ($adr->$idxAdr) {[get $id interface];"";"";[get $id address];[get $id network];""}}
+  :local arp {"intf";"";"mac";"ip";"";""}; :local idxArp -1; # ip-arp list
+  /ip arp; :foreach id in=[find complete=yes] do={:set idxArp ($idxArp+1)
+    :set ($arp->$idxArp) {[get $id interface];"";[get $id mac-address];[get $id address];"";""}}
+  :local rou {"gw";"";"";"";"netw";""}; :local idxRou -1; # ip-arp list
+  /ip route; :foreach id in=[find] do={:set idxRou ($idxRou+1)
+    :set ($rou->$idxRou) {[get $id gateway];"";"";"";[get $id dst-address];""}}
+  :local arr {"intf";"host";"mac";"ip";"netw";"rem"}; :local idxArr 0; # build list
+  /; :set ($arr->0) {"INTERFACE";"NAME";"MAC-ADDRESS";"IP-ADDRESS";"NETWORK";"REMARK"}
 
-  # bridge host list
-  :local hstCnt 0; :local hst {"";"";"";"";"";""};
-  /interface bridge host;
-  :foreach hstIdx in=[find] do={
-    :do {
-      :local hstCmt ""; :local hstNam ""; :local hstIpa "";
-      :local hstIfc [get $hstIdx on-interface];
-      :local hstMac [get $hstIdx mac-address];
-      :local hstBrg [get $hstIdx bridge];
-      :if ([get $hstIdx local]=true) do={ 
-        :set hstNam [/system identity get name];
-        :set hstIpa [/ip address get [find interface=$hstBrg] address];
-      } else={
-        /ip dhcp-server lease;
-        :do {
-          :set hstNam [get [find mac-address=$hstMac] host-name];
-          :set hstIpa [get [find mac-address=$hstMac] address];
-          :set hstCmt [get [find mac-address=$hstMac] comment];
-        } on-error={
-          :set hstNam [get [find mac-address=$hstMac dynamic=yes] host-name];
-          :set hstIpa [get [find mac-address=$hstMac dynamic=yes] address];
-        }
-      }
-      :set ($hst->$hstCnt) {$hstIfc;$hstNam;$hstMac;$hstIpa;$hstBrg;$hstCmt};
-      :set hstCnt ($hstCnt+1);
-    } on-error={}
-  }
-  :set hstCnt ($hstCnt-1);
+  # data processing
+  :for i from=0 to=$idxAdr do={
+    :for j from=0 to=$idxIfc do={
+      :if (($adr->$i->0)=($ifc->$j->0)) do={ # when equal 'interface' in 'ip address'&'interface' lists ->
+        :set ($adr->$i->1) ($ifc->$j->0); :set ($adr->$i->2) ($ifc->$j->2)}}
+    :for j from=0 to=$idxDhC do={
+      :if (($adr->$i->0)=($dhC->$j->0)&&($adr->$i->3)=($dhC->$j->3)) do={ # when equal 'interface/ip' in 'ip address'&'dhcp-client' lists ->
+        :set ($adr->$i->1) "GW:$($dhC->$j->1)"; :set ($adr->$i->5) ($dhC->$j->5)}}
+    :if ($debug) do={:put "adr $i $($adr->$i)"}}
+  :for i from=0 to=$idxBrg do={
+    :if (($brg->$i->5)=true) do={ # when 'bridge-host' is 'local'
+      :set ($brg->$i->1) $sysId; :set ($brg->$i->3) ($brg->$i->4); :set ($brg->$i->5) ""}
+    :for j from=0 to=$idxDhS do={
+      :if (($brg->$i->2)=($dhS->$j->2)) do={ # when equal 'mac' in 'bridge-hosts'&'dhcp-server' lists ->
+        :set ($brg->$i->1) ($dhS->$j->1); :set ($brg->$i->3) ($dhS->$j->3)}}
+    :for j from=0 to=$idxAdr do={
+      :if (($brg->$i->0)=($adr->$j->0)) do={ # when equal 'interface' in 'bridge-hosts'&'ip-address' lists ->
+          :set ($brg->$i->1) ($adr->$j->1); :set ($brg->$i->3) ($adr->$j->3)
+          :set ($brg->$i->4) ($adr->$j->4); :set ($brg->$i->5) ($adr->$j->5)}}
+    :if ($debug) do={:put "brg $i $($brg->$i)"}}
+  :for i from=0 to=$idxArp do={
+    :for j from=0 to=$idxDhS do={
+      :if (($arp->$i->2)=($dhS->$j->2)&&($arp->$i->3)=($dhS->$j->3)) do={ # when equal 'mac/ip' in 'dhcp-server'&'ip arp' lists ->
+        :set ($arp->$i->0) ($dhS->$j->0); :set ($arp->$i->1) ($dhS->$j->1)
+        :set ($arp->$i->5) ($dhS->$j->5)}}
+    :for j from=0 to=$idxBrg do={
+      :if (($arp->$i->2)=($brg->$j->2)) do={ # when equal 'mac' in 'bridge-hosts'&'ip arp' lists ->
+        :set ($arp->$i->0) ($brg->$j->0); :set ($arp->$i->1) ($brg->$j->1); 
+        :set ($arp->$i->3) ($brg->$j->3); :set ($arp->$i->4) ($brg->$j->4)}}
+    :for j from=0 to=$idxAdr do={
+      :if (($arp->$i->3)=($adr->$j->3)) do={ # when equal 'ip' in 'ip address'&'ip arp' lists ->
+        :set ($arp->$i->0) ($adr->$j->0); :set ($arp->$i->1) ($adr->$j->1);
+        :set ($arp->$i->4) ($adr->$j->4); :set ($arp->$i->5) ($adr->$j->5)}}
+    :if ($debug) do={:put "arp $i $($arp->$i)"}}
+  :for i from=0 to=$idxIfc do={
+    :for j from=0 to=$idxAdr do={
+      :if (($ifc->$i->0)=($adr->$j->0)) do={:set idxArr ($idxArr+1); # when equal 'interface' in 'interface'&'ip address' lists ->
+        :set ($arr->$idxArr) ($adr->$j)}}
+    :for j from=0 to=$idxArp do={
+      :if (($ifc->$i->0)=($arp->$j->0)) do={ # when equal 'interface' in 'interface'&'ip arp' lists ->
+        :if ([:len [:find key=($arp->$j) in=$arr]]=0) do={:set idxArr ($idxArr+1); :set ($arr->$idxArr) ($arp->$j)}}}
+    :for j from=0 to=$idxBrg do={
+      :if (($ifc->$i->0)=($brg->$j->0)&&($ifc->$i->2)=($brg->$j->2)) do={ # when equal interface/mac in 'interface'&'bridge-hosts' lists ->
+        :if ([:len [:find key=($brg->$j) in=$arr]]=0) do={:set idxArr ($idxArr+1); :set ($arr->$idxArr) ($brg->$j)}}}
+    :if ($debug) do={:put "ifc $i $($ifc->$i)"}}
+    :for i from=0 to=$idxArr do={
+      :for j from=0 to=$idxRou do={
+        :if (($arr->$i->0)=($rou->$j->0)) do={ # when equal 'interface' in 'target'&'ip-route' lists
+          :set ($arr->$i->4) ($rou->$j->4)}}
+      :for j from=0 to=$idxAdr do={
+        :if (($arr->$i->3)=($adr->$j->0)&&($arr->$i->3)=($arr->$i->4)) do={ # when equal 'interface' in 'target'&'ip-route' lists
+          :set ($arr->$i->3) ($adr->$j->3)}}
+    :if ($debug) do={:put "arr $i $($arr->$i)"}}
 
-  # ip address list
-  :local ipaCnt 0; :local ipa {"";"";"";""};
-  /ip address;
-  :foreach ipaIdx in=[find] do={
-    :local ipaIfc [get $ipaIdx interface];
-    :local ipaAdr [get $ipaIdx address];
-    :local ipaNet [get $ipaIdx network];
-    :local ipaCmt [get $ipaIdx comment];
-    :set ($ipa->$ipaCnt) {$ipaIfc;$ipaAdr;$ipaNet;$ipaCmt};
-    :set ipaCnt ($ipaCnt+1);
-  }
-  :set ipaCnt ($ipaCnt-1);
-
-  # ip arp list
-  :local arpCnt 0; :local arp {"";"";"";"";""};
-  /ip arp;
-  :foreach arpIdx in=[find] do={
-    :local arpIfc [get $arpIdx interface];
-    :local arpIpa [get $arpIdx address];
-    :local arpMac [get $arpIdx mac-address];
-    :local arpCmt [get $arpIdx comment];
-    :local arpNet "";
-    :do {:set arpNet [/ip dhcp-client get [find interface=$arpIfc] gateway]} on-error={}
-    :if ($arpNet=$arpIpa) do={:set arpNet "GATEWAY"}
-    :local equMac false;
-    :for i from=0 to=$hstCnt do={
-      :local fndDst [:find key=$arpMac in=($hst->$i)];
-      :if ([:tostr [$fndDst]]!="") do={:set equMac true}
-    }
-    :if ($equMac=false) do={
-      :do {
-        /interface bridge host;
-        :if ([get [find mac-address=$arpMac] on-interface]!="") do={
-          :set arpNet $arpIfc;
-          :set arpIfc [get [find mac-address=$arpMac] on-interface];
-        }
-      } on-error={}
-      :set ($arp->$arpCnt) {$arpIfc;$arpMac;$arpIpa;$arpCmt;$arpNet};
-      :set arpCnt ($arpCnt+1);
-    }
-  }
-  :set arpCnt ($arpCnt-1);
-
-  # build list
-  :local arrIdx 1; :local arr {"";"";"";"";"";"";""};
-  :set ($arr->0) {"NUMBER";"INTERFACE";"HOST-NAME";"MAC-ADDRESS";"IP-ADDRESS";"NETWORK";"REMARK"};
-  :set ($arr->1) {"";"";"";"";"";"";""};
-  :for i from=0 to=$ifcCnt do={
-    :for j from=0 to=$hstCnt do={
-      :local fndDst [:find key=($hst->$j->0) in=($ifc->$i)];
-      :if ([:tostr [$fndDst]]!="" && ($hst->$j->4)!=($hst->$j->0)) do={
-        :if (($hst->$j->2)=($ifc->$i->2)) do={
-          :set ($arr->$arrIdx) {$arrIdx;($hst->$j->0);($hst->$j->1);($hst->$j->2);($hst->$j->3);($hst->$j->4);($ifc->$i->3)}; 
-        } else={
-          :set ($arr->$arrIdx) {$arrIdx;($hst->$j->0);($hst->$j->1);($hst->$j->2);($hst->$j->3);($hst->$j->4);($hst->$j->5)}; 
-        }
-        :set arrIdx ($arrIdx+1);
-      }
-    }
-    :for j from=0 to=$arpCnt do={
-      :local fndDst [:find key=($arp->$j->0) in=($ifc->$i)];
-      :if ([:tostr [$fndDst]]!="") do={
-        :set ($arr->$arrIdx) {$arrIdx;($arp->$j->0);"";($arp->$j->1);($arp->$j->2);($arp->$j->4);($arp->$i->3)}; 
-        :set arrIdx ($arrIdx+1);
-      }
-    }
-    :for j from=0 to=$ipaCnt do={
-      :local fndDst [:find key=($ifc->$i->0) in=($ipa->$j)];
-      :if ([:tostr [$fndDst]]!="") do={
-        :set ($arr->$arrIdx) {$arrIdx;($ifc->$i->0);($ifc->$i->1);($ifc->$i->2);($ipa->$j->1);($ipa->$j->2);($ifc->$i->3)}; 
-        :set arrIdx ($arrIdx+1);
-      }
-    }
-  }
-  :set arrIdx ($arrIdx-1);
-
-  # output list
-  :local TextCut do={:return [:pick "$1                                             " 0 $2]}
-  :for i from=0 to=$arrIdx do={
-    :set outNetMap ("$outNetMap\r\n$[$TextCut ($arr->$i->0) 3]\t$[$TextCut ($arr->$i->3) 17]\t$[$TextCut ($arr->$i->4) 18]\t\
-    $[$TextCut ($arr->$i->1) 18]\t$[$TextCut ($arr->$i->5) 15]\t$[$TextCut ($arr->$i->2) 21]\t$[$TextCut ($arr->$i->6) 35]");
-  }
-  :put ("---------------------------------------------------------------------------------------------------------------------------$outNetMap");
-  :if ([:len $myFile]!=0) do={
-    :local fileName ("$[/system identity get name]_$myFile");
-    :execute script=":global outNetMap; :put (\"$outNetMap\");" file=$fileName;
-    :put ("File '$fileName' was successfully created");
+  # data output
+  :local TxtCut do={:return [:pick "$1                                             " 0 $2]}; # output list
+  :if ($debug) do={:put "Active elements: intf:$idxIfc brg-hst:$idxBrg dhcp-srv-lease:$idxDhS dhcp-clnt:$idxDhC\
+    ip-addr:$idxAdr ip-arp:$idxArp ip-rout:$idxRou target:$idxArr"}
+  :for i from=0 to=$idxArr do={:set outNetMap "$outNetMap\r\n$[$TxtCut $i 3]  $[$TxtCut ($arr->$i->0) 22]  $[$TxtCut ($arr->$i->2)\
+    17]  $[$TxtCut ($arr->$i->3) 18]  $[$TxtCut ($arr->$i->4) 18]  $[$TxtCut ($arr->$i->1) 18]  $[$TxtCut ($arr->$i->5) 30]"}
+  :set outNetMap "----------------------------------------------------------------------\
+    ----------------------------------------------------------------$outNetMap"
+  :put $outNetMap; # /log warning $outNetMap
+  :if ([:len $myFile]!=0) do={:local fileName ("$sysId_$myFile")
+    :execute script=":global outNetMap; :put (\"$outNetMap\");" file=$fileName
+    :put ("File '$fileName' was successfully created")
   } else={:put ("File creation is not enabled")}
 } on-error={:put "Problem in work 'NetMap' script"}
 :delay 1s; # time delay between command executing and remove global variables
-/system script environment remove [find name~"outNetMap"];
+/system script environment remove [find name~"outNetMap"]
