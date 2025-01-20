@@ -18,7 +18,7 @@
   /interface bridge host; find; :foreach id in=[find disabled=no] do={:set idxBrg ($idxBrg+1)
     :set ($brg->$idxBrg) {[get $id on-interface];"";[get $id mac-address];"";[get $id bridge];"";[get $id local]}}
   :local dhS {"";"host";"mac";"ip";"";"rem"}; :local idxDhS -1; # dhcp-server list
-  /ip dhcp-server lease; find; :foreach id in=[find active-mac-address~":"] do={:set idxDhS ($idxDhS+1)
+  /ip dhcp-server lease; find; :foreach id in=[find mac-address~":"] do={:set idxDhS ($idxDhS+1)
     :set ($dhS->$idxDhS) {"";[get $id host-name];[get $id mac-address];[get $id address];"";[get $id comment]}}
   :local dhC {"intf";"gw";"";"ip";"";"rem"}; :local idxDhC -1; # dhcp-client list
   /ip dhcp-client; find; :foreach id in=[find status=bound] do={:set idxDhC ($idxDhC+1)
